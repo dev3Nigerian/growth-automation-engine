@@ -11,6 +11,7 @@ dotenv.config();
 import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import leadRoutes from './routes/leadRoutes';
+import { initLeadsTable } from './models/leadModel';
 
 const app: Application = express();
 
@@ -39,8 +40,16 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 // ─── Server Bootstrap ─────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
 
-app.listen(PORT, () => {
-  console.log(`Growth Automation Engine running on port ${PORT}`);
+async function bootstrap(): Promise<void> {
+  await initLeadsTable();
+  app.listen(PORT, () => {
+    console.log(`Growth Automation Engine running on port ${PORT}`);
+  });
+}
+
+bootstrap().catch((err) => {
+  console.error('[Startup] Failed to initialise application:', err instanceof Error ? err.message : String(err));
+  process.exit(1);
 });
 
 export default app;

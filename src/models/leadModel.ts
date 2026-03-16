@@ -19,6 +19,8 @@ export interface Lead {
   website: string;
   industry: string;
   source: string;
+  score: number | null;
+  score_reason: string;
   created_at?: Date;
 }
 
@@ -40,10 +42,14 @@ export async function initLeadsTable(): Promise<void> {
       website    VARCHAR(255),
       industry   VARCHAR(255),
       source     VARCHAR(255),
+      score      INTEGER,
+      score_reason TEXT DEFAULT '',
       created_at TIMESTAMP DEFAULT NOW()
     )
   `;
   await pool.query(sql);
+  await pool.query("ALTER TABLE leads ADD COLUMN IF NOT EXISTS score INTEGER");
+  await pool.query("ALTER TABLE leads ADD COLUMN IF NOT EXISTS score_reason TEXT DEFAULT ''");
 }
 
 // ─── CRUD Helpers ─────────────────────────────────────────────────────────────
@@ -54,12 +60,12 @@ export async function initLeadsTable(): Promise<void> {
  * @returns The newly created lead row including generated `id` and `created_at`
  */
 export async function createLead(lead: Omit<Lead, 'id' | 'created_at'>): Promise<Lead> {
-  const { name, company, email, linkedin, twitter, website, industry, source } = lead;
+  const { name, company, email, linkedin, twitter, website, industry, source, score, score_reason } = lead;
   const result = await pool.query<Lead>(
-    `INSERT INTO leads (name, company, email, linkedin, twitter, website, industry, source)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO leads (name, company, email, linkedin, twitter, website, industry, source, score, score_reason)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING *`,
-    [name, company, email, linkedin, twitter, website, industry, source],
+    [name, company, email, linkedin, twitter, website, industry, source, score, score_reason],
   );
   return result.rows[0];
 }

@@ -20,6 +20,17 @@ interface HunterEmailFinderResponse {
   };
 }
 
+function isLikelyPersonName(name: string): boolean {
+  const normalized = name.replace(/\s+/g, ' ').trim();
+  const parts = normalized.split(' ');
+
+  if (parts.length < 2 || parts.length > 4) {
+    return false;
+  }
+
+  return parts.every((part) => /^[A-Z][a-z'’-]+$/.test(part));
+}
+
 // ─── Enrichment ───────────────────────────────────────────────────────────────
 
 /**
@@ -41,6 +52,11 @@ export async function findEmail(name: string, domain: string): Promise<string | 
     return null;
   }
 
+  if (!isLikelyPersonName(name)) {
+    console.warn(`[Enrichment] Skipping Hunter lookup for invalid founder name: ${name}`);
+    return null;
+  }
+
   // Split the full name into first and last parts
   const parts = name.trim().split(/\s+/);
   const firstName = parts[0] ?? '';
@@ -56,7 +72,7 @@ export async function findEmail(name: string, domain: string): Promise<string | 
           last_name: lastName,
           api_key: apiKey,
         },
-        timeout: 10_000,
+        timeout: 15_000,
       },
     );
 

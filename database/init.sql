@@ -14,8 +14,13 @@ CREATE TABLE IF NOT EXISTS leads (
   website    VARCHAR(255),
   industry   VARCHAR(255),
   source     VARCHAR(255),
+  score      INTEGER,
+  score_reason TEXT DEFAULT '',
   created_at TIMESTAMP DEFAULT NOW()
 );
+
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS score INTEGER;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS score_reason TEXT DEFAULT '';
 
 -- Index for fast email lookups (idempotency checks)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_email ON leads(email) WHERE email IS NOT NULL AND email <> '';

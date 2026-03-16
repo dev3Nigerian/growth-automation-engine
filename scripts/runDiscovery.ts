@@ -47,8 +47,10 @@ async function main(): Promise<void> {
 
   for (const startup of discovered) {
     try {
-      await processSingleStartup(startup.name, topic);
-      saved++;
+      const didSave = await processSingleStartup(startup.name, topic);
+      if (didSave) {
+        saved++;
+      }
       console.log(`  ✓ Processed: ${startup.name}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -14,6 +14,41 @@ export interface DiscoveredStartup {
   name: string;
 }
 
+const EXCLUDED_RESULT_NAMES = new Set([
+  'engineering & development',
+  'llms',
+  'productivity',
+  'marketing & sales',
+  'design & creative',
+  'social & community',
+  'finance',
+  'ai agents',
+  'trending categories',
+  'top reviewed',
+  'trending products',
+  'top forum threads',
+  'products',
+  'launches',
+  'users',
+  'first',
+  'previous',
+  'next',
+  'last',
+]);
+
+function isUsefulStartupName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized || EXCLUDED_RESULT_NAMES.has(normalized)) {
+    return false;
+  }
+
+  if (/^\d+\s+reviews?$/i.test(normalized)) {
+    return false;
+  }
+
+  return normalized.length >= 2;
+}
+
 // ─── Retry Helper ─────────────────────────────────────────────────────────────
 
 /**
@@ -73,22 +108,36 @@ export async function discoverStartups(topic: string): Promise<DiscoveredStartup
 
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 30_000 });
 
-      // Extract post titles from Product Hunt search results
+      // Extract actual product cards from Product Hunt search results.
       const startups = await page.evaluate(() => {
+        const seen = new Set<string>();
         const items: { name: string }[] = [];
+        const cards = Array.from(
+          document.querySelectorAll<HTMLElement>('[data-test^="spotlight-result-product-"]'),
+        );
 
-        // Product Hunt search results use data-test="post-name" or heading tags
-        const headings = document.querySelectorAll('[data-test="post-name"], h3');
-        headings.forEach((el) => {
-          const text = el.textContent?.trim();
-          if (text) items.push({ name: text });
-        });
+        for (const card of cards) {
+          const title =
+            card.querySelector('span.text-base')?.textContent?.trim() ??
+            card.querySelector('img[alt]')?.getAttribute('alt')?.trim() ??
+            card.querySelector('video[aria-label]')?.getAttribute('aria-label')?.trim() ??
+            '';
 
-        return items.slice(0, 20); // cap at 20 results per search
+          if (!title || seen.has(title)) {
+            continue;
+          }
+
+          seen.add(title);
+          items.push({ name: title });
+        }
+
+        return items.slice(0, 20);
       });
 
-      console.log(`[Discovery] Found ${startups.length} startups for topic: "${topic}"`);
-      return startups;
+      const filteredStartups = startups.filter((startup) => isUsefulStartupName(startup.name));
+
+      console.log(`[Discovery] Found ${filteredStartups.length} startups for topic: "${topic}"`);
+      return filteredStartups;
     } finally {
       if (browser) await browser.close();
     }

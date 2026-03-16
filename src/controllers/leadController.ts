@@ -14,6 +14,7 @@ import { Request, Response } from 'express';
 import { discoverStartups } from '../services/discoveryService';
 import { scrapeStartupData } from '../services/scraperService';
 import { findEmail } from '../services/enrichmentService';
+import { scoreLead } from '../services/leadScoringService';
 import { createLead, findLeadByEmail } from '../models/leadModel';
 import { addScrapeJob } from '../queues/scrapeQueue';
 
@@ -72,15 +73,24 @@ export async function discoverLeads(req: Request, res: Response): Promise<void> 
  * @param startupName - Name of the startup to process
  * @param topic       - The original topic used as the `industry` field
  */
-export async function processSingleStartup(startupName: string, topic: string): Promise<void> {
+export async function processSingleStartup(startupName: string, topic: string): Promise<boolean> {
   // Step 2 – Scrape founder / company data
   const scraped = await scrapeStartupData(startupName);
+
+  const hasMeaningfulData = Boolean(
+    scraped.founderName || scraped.website || scraped.linkedin || scraped.twitter,
+  );
+
+  if (!hasMeaningfulData) {
+    console.warn(`[Controller] Skipping empty lead for: ${startupName}`);
+    return false;
+  }
 
   // Step 3 – Attempt to enrich email via Hunter.io
   let email = '';
   if (scraped.website) {
     try {
-      const domain = new URL(scraped.website).hostname;
+      const domain = new URL(scraped.website).hostname.replace(/^www\./, '');
       email = (await findEmail(scraped.founderName, domain)) ?? '';
     } catch {
       // URL parse failed – skip enrichment
@@ -92,9 +102,20 @@ export async function processSingleStartup(startupName: string, topic: string): 
     const existing = await findLeadByEmail(email);
     if (existing) {
       console.log(`[Controller] Lead already exists for email: ${email}`);
-      return;
+      return false;
     }
   }
+
+  const scoring = await scoreLead({
+    founderName: scraped.founderName,
+    company: scraped.company,
+    email,
+    linkedin: scraped.linkedin,
+    twitter: scraped.twitter,
+    website: scraped.website,
+    industry: topic,
+    source: 'product_hunt',
+  });
 
   // Step 4 – Persist lead
   await createLead({
@@ -106,7 +127,10 @@ export async function processSingleStartup(startupName: string, topic: string): 
     website: scraped.website,
     industry: topic,
     source: 'product_hunt',
+    score: scoring.score,
+    score_reason: scoring.rationale,
   });
 
-  console.log(`[Controller] Lead saved for: ${startupName}`);
+  console.log(`[Controller] Lead saved for: ${startupName}${scoring.score ? ` (score: ${scoring.score})` : ''}`);
+  return true;
 }

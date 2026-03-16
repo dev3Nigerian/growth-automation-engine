@@ -16,6 +16,12 @@ import { Worker, Job } from 'bullmq';
 import { getRedisConnection } from '../config/redis';
 import { ScrapeJobData } from '../queues/scrapeQueue';
 import { processSingleStartup } from '../controllers/leadController';
+import { initLeadsTable } from '../models/leadModel';
+
+void initLeadsTable().catch((err) => {
+  console.error('[Worker] Failed to initialise leads table:', err instanceof Error ? err.message : String(err));
+  process.exit(1);
+});
 
 const worker = new Worker<ScrapeJobData>(
   'scrape',
