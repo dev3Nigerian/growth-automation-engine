@@ -1,6 +1,6 @@
 # Growth Automation Engine
 
-A production-grade automation system that discovers startups, scrapes founder data, enriches contact information, and generates personalised outreach emails.
+A production-grade automation system that discovers startups, scrapes founder data, enriches contact information, scores leads with AI, and generates personalised outreach emails.
 
 ---
 
@@ -32,12 +32,18 @@ A production-grade automation system that discovers startups, scrapes founder da
                                    └───────┬──────────┘
                               ┌────────────┼────────────┐
                               │            │            │
-                   ┌──────────▼──┐  ┌──────▼───┐  ┌────▼──────┐
-                   │  Scraper    │  │Enrichment│  │ Outreach  │
-                   │  Service    │  │ Service  │  │ Service   │
-                   │ (Puppeteer) │  │(Hunter.io│  │(Template) │
-                   └─────────────┘  └──────────┘  └───────────┘
-                                          │
+                       ┌──────────▼──┐  ┌──────▼───┐  ┌────▼──────┐
+                       │  Scraper    │  │Enrichment│  │ Outreach  │
+                       │  Service    │  │ Service  │  │ Service   │
+                       │ (DuckDuckGo │  │(Hunter.io│  │(Template) │
+                       │ + Website)  │  └──────┬───┘  └───────────┘
+                       └──────┬──────┘         │
+                         │         ┌──────▼──────┐
+                         │         │ AI Scoring  │
+                         │         │   Service   │
+                         │         │  (Ollama)   │
+                         │         └──────┬──────┘
+                         │                │
                               ┌───────────▼────────────┐
                               │     PostgreSQL DB       │
                               │   src/models/           │
@@ -63,8 +69,9 @@ growth-automation-engine/
 │   │   └── leadRoutes.ts         # Express router
 │   ├── services/
 │   │   ├── discoveryService.ts   # Product Hunt scraper (Puppeteer)
-│   │   ├── scraperService.ts     # Google search scraper (Puppeteer)
+│   │   ├── scraperService.ts     # DuckDuckGo + website fallback scraper
 │   │   ├── enrichmentService.ts  # Hunter.io email enrichment
+│   │   ├── leadScoringService.ts # Ollama-based lead scoring
 │   │   └── outreachService.ts    # Outreach email generator
 │   └── workers/
 │       └── scrapeWorker.ts       # BullMQ worker process
@@ -86,6 +93,7 @@ growth-automation-engine/
 - Node.js ≥ 18
 - PostgreSQL ≥ 14
 - Redis ≥ 6
+- Optional: access to an Ollama-compatible chat endpoint for lead scoring
 
 ### 1. Clone & Install
 
@@ -103,13 +111,23 @@ cp .env.example .env
 
 Edit `.env` and fill in:
 
-| Variable        | Description                              |
-|-----------------|------------------------------------------|
-| `PORT`          | HTTP server port (default: `3000`)       |
-| `DATABASE_URL`  | PostgreSQL connection string             |
-| `REDIS_HOST`    | Redis host (default: `localhost`)        |
-| `REDIS_PORT`    | Redis port (default: `6379`)             |
-| `HUNTER_API_KEY`| Hunter.io API key for email enrichment  |
+| Variable | Description |
+|----------|-------------|
+| `PORT` | HTTP server port (default: `3000`) |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `REDIS_HOST` | Redis host (default: `localhost`) |
+| `REDIS_PORT` | Redis port (default: `6379`) |
+| `HUNTER_API_KEY` | Hunter.io API key for email enrichment |
+| `OLLAMA_MODEL` | Model name sent to the Ollama-compatible chat endpoint |
+| `OLAMA_API_URL` | Hosted Ollama-compatible chat URL, for example `https://ollama.com/api/chat` |
+| `OLAMA_API_KEY` | Bearer token for the hosted Ollama-compatible API |
+| `OLLAMA_BASE_URL` | Local Ollama base URL fallback when `OLAMA_API_URL` is not set |
+
+Notes:
+
+- The scoring service first checks `OLAMA_API_URL` and `OLAMA_API_KEY`.
+- If no hosted API URL is configured, it falls back to `OLLAMA_BASE_URL` and calls `/api/chat` locally.
+- If scoring fails, the lead pipeline still continues and saves the lead without a score.
 
 ### 3. Database Setup
 
@@ -117,7 +135,10 @@ Edit `.env` and fill in:
 psql -U <user> -d <database> -f database/init.sql
 ```
 
-Or the leads table is created automatically on first run via `initLeadsTable()`.
+Or let the app initialise the schema on startup. The `leads` table now includes AI scoring fields:
+
+- `score` - numeric score from `1` to `100`
+- `score_reason` - short rationale returned by the scoring model
 
 ### 4. Build
 
@@ -142,8 +163,16 @@ npm start
 **Worker (in a separate terminal):**
 
 ```bash
-ts-node src/workers/scrapeWorker.ts
+npx ts-node src/workers/scrapeWorker.ts
 ```
+
+**CLI discovery run:**
+
+```bash
+npm run discover "AI startups"
+```
+
+The CLI runner creates missing lead table columns automatically before processing.
 
 ---
 
@@ -176,6 +205,8 @@ Content-Type: application/json
 { "leadsCollected": 15 }
 ```
 
+This endpoint queues discovery jobs. Scraping, enrichment, scoring, and persistence happen in the worker.
+
 ---
 
 ## CLI Usage
@@ -187,9 +218,35 @@ npm run discover "developer tools"
 
 This runs the complete pipeline synchronously:
 1. Discovers startups from Product Hunt
-2. Scrapes founder data via Google
+2. Scrapes founder data via DuckDuckGo search plus a best-effort website crawl
 3. Enriches emails via Hunter.io
-4. Saves leads to PostgreSQL
+4. Scores each lead with an Ollama-compatible chat model
+5. Saves leads to PostgreSQL
+
+## Lead Quality
+
+The pipeline applies a few guardrails before saving leads:
+
+- Discovery filters Product Hunt category labels and other non-product headings.
+- Scraping skips rows with no meaningful company or founder data.
+- Hunter lookups only run when the founder name looks like a real person name.
+- Website selection prefers likely company domains over media sites, directories, and profile aggregators.
+
+## Scoring Output
+
+Saved leads now include:
+
+- `score`: integer score between `1` and `100`
+- `score_reason`: short model-generated explanation
+
+If you inspect the database directly, for example in `psql`, you can query:
+
+```sql
+SELECT id, company, name, email, score, score_reason
+FROM leads
+ORDER BY created_at DESC
+LIMIT 20;
+```
 
 ---
 
